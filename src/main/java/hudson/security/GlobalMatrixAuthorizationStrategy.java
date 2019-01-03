@@ -24,13 +24,15 @@
 package hudson.security;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import hudson.Extension;
 import hudson.PluginManager;
+import hudson.Util;
 import hudson.model.Descriptor;
+import hudson.model.User;
 import jenkins.model.Jenkins;
 import hudson.util.FormValidation;
-import hudson.Extension;
-import hudson.model.User;
 import net.sf.json.JSONObject;
+import org.acegisecurity.AuthenticationException;
 import org.acegisecurity.acls.sid.PrincipalSid;
 import org.acegisecurity.acls.sid.Sid;
 import org.jenkinsci.plugins.matrixauth.AbstractAuthorizationContainerConverter;
@@ -40,8 +42,9 @@ import org.jenkinsci.plugins.matrixauth.Messages;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.DoNotUse;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
-import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.QueryParameter;
+import org.kohsuke.stapler.StaplerRequest;
+import org.springframework.dao.DataAccessException;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -222,10 +225,29 @@ public class GlobalMatrixAuthorizationStrategy extends AuthorizationStrategy imp
             return doCheckName_(value, Jenkins.getInstance(), Jenkins.ADMINISTER);
         }
 
+        // Get the full name of the user. Returns an empty string if user doesn't exist
+        @Restricted(NoExternalUse.class)
+        public FormValidation doGetUserFullName(@QueryParameter String userId) {
+            String substr = userId.substring(1, userId.length() - 1);
+            String escaped = Util.escape(substr);
+            Jenkins jenkins = Jenkins.getInstance();
+            if (jenkins.hasPermission(Jenkins.ADMINISTER) && !escaped.equals("authenticated")) {
+                try {
+                    jenkins.getSecurityRealm().loadUserByUsername(escaped);
+                    User user = User.getById(escaped, false);
+                    if (user != null) {
+                        return FormValidation.respond(FormValidation.Kind.OK, user.getFullName());
+                    }
+                } catch (AuthenticationException | DataAccessException ignore) {
+                }
+            }
+            return FormValidation.respond(FormValidation.Kind.ERROR, "");
+        }
     }
 
     @Restricted(DoNotUse.class)
-    @Extension public static final class PermissionAdderImpl extends PermissionAdder {
+    @Extension
+    public static final class PermissionAdderImpl extends PermissionAdder {
 
         @Override public boolean add(AuthorizationStrategy strategy, User user, Permission perm) {
             if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
